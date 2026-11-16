@@ -296,19 +296,36 @@ def fetch_yield(country: str):
     try:
         html, how = _get_te_html(url)
         soup = BeautifulSoup(html, "html.parser")
+        # Note: html.parser does not add implicit <tbody>/<thead>, so scan all <tr> directly.
         for table in soup.find_all("table"):
-            headers = [th.get_text(strip=True) for th in table.select("thead th")]
-            if "Yield" not in headers:
-                continue
-            iy = headers.index("Yield")
-            idate = headers.index("Date") if "Date" in headers else None
-            for tr in table.select("tbody tr"):
+            headers = []
+            for tr in table.find_all("tr"):
+                ths = tr.find_all("th")
+                if ths and not tr.find_all("td"):
+                    headers = [th.get_text(strip=True) for th in ths]
+                    continue
                 cells = [td.get_text(strip=True) for td in tr.find_all("td")]
-                if cells and cells[0].endswith("10Y") and len(cells) > iy:
-                    y = float(cells[iy].replace(",", ""))
-                    date = cells[idate] if idate is not None and len(cells) > idate else ""
+                if not cells or not re.search(r"10Y$", cells[0]):
+                    continue
+                iy = headers.index("Yield") if "Yield" in headers else None
+                idate = headers.index("Date") if "Date" in headers else None
+                y = None
+                if iy is not None and iy < len(cells):
+                    try:
+                        y = float(cells[iy].replace(",", ""))
+                    except ValueError:
+                        y = None
+                if y is None:  # first numeric cell after the name
+                    for c_ in cells[1:]:
+                        try:
+                            y = float(c_.replace(",", ""))
+                            break
+                        except ValueError:
+                            continue
+                if y is not None:
+                    date = cells[idate] if idate is not None and idate < len(cells) else cells[-1]
                     return y / 100, date, "live"
-        raise ValueError("10Y row not found")
+        raise ValueError(f"10Y row not found ({len(soup.find_all('table'))} tables, via {how})")
     except Exception as e:  # noqa: BLE001
         return float("nan"), "", f"fetch failed: {e}"[:160]
 
